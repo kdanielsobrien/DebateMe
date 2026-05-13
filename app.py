@@ -1,284 +1,341 @@
-# app.py
-
-# Streamlit creates the web app interface.
 import streamlit as st
+from datetime import datetime
 
-# JSON helps us read structured AI results.
-import json
-
-# dotenv lets Python read your secret API key from the .env file.
-from dotenv import load_dotenv
-
-# os lets Python access environment variables.
-import os
-
-# OpenAI lets this app talk to the AI model.
-from openai import OpenAI
-
-
-# Load secret values from the .env file.
-load_dotenv()
-
-# Create the OpenAI client.
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-
-
-# -----------------------------
-# APP SETUP
-# -----------------------------
-
-st.set_page_config(
-    page_title="DebateRef",
-    page_icon="⚖️",
-    layout="wide"
-)
+st.set_page_config(page_title="DebateRef", page_icon="⚖️", layout="wide")
 
 st.title("⚖️ DebateRef")
-st.caption("AI debate evaluator with scoring, clarity review, and fact-checking support.")
+st.caption("Pick a topic, challenge an argument, submit rebuttals, and judge the round.")
 
 
 # -----------------------------
-# DEFAULT DATA
+# STARTER TOPICS + ARGUMENTS
 # -----------------------------
 
-# These are the judging categories your original prototype used.
-JUDGING_CRITERIA = [
-    "Evidence Quality",
-    "Logic",
-    "Direct Responses",
-    "Accuracy",
-    "Clarity",
-    "Consistency",
-    "Civility"
-]
-
-# This creates saved messages the first time the app loads.
-if "messages" not in st.session_state:
-    st.session_state.messages = [
+STARTER_TOPICS = {
+    "Solar Panels": [
         {
-            "side": "Mike",
-            "text": "Cities should put solar on public buildings because schools, libraries, and town halls use electricity every day. Even partial offset lowers operating costs over time."
+            "author": "Alex",
+            "argument": "Cities should require solar panels on public buildings because it can lower long-term energy costs and reduce emissions."
         },
         {
-            "side": "Opponent",
-            "text": "The upfront cost is huge. Towns already struggle with budgets, and solar output drops in cloudy winters."
-        }
-    ]
-
-# This stores the latest AI judgment.
-if "result" not in st.session_state:
-    st.session_state.result = None
+            "author": "Jordan",
+            "argument": "Solar mandates can be too expensive upfront, especially for towns with tight budgets."
+        },
+    ],
+    "Universal Health Care": [
+        {
+            "author": "Casey",
+            "argument": "Universal health care could make medical access more equal and reduce financial stress from unexpected illness."
+        },
+        {
+            "author": "Taylor",
+            "argument": "Universal health care could increase taxes and reduce choice depending on how it is designed."
+        },
+    ],
+    "Voting Age": [
+        {
+            "author": "Morgan",
+            "argument": "The voting age should be lowered because younger people are affected by policy and deserve representation."
+        },
+        {
+            "author": "Riley",
+            "argument": "The voting age should stay the same because voting requires maturity and life experience."
+        },
+    ],
+}
 
 
 # -----------------------------
-# AI JUDGE FUNCTION
+# SESSION STATE
+# This is Streamlit's way of remembering things
+# while the app is running.
 # -----------------------------
 
-def judge_debate(topic, messages):
+if "topics" not in st.session_state:
+    st.session_state.topics = STARTER_TOPICS.copy()
+
+if "battles" not in st.session_state:
+    st.session_state.battles = []
+
+if "active_topic" not in st.session_state:
+    st.session_state.active_topic = "Solar Panels"
+
+if "selected_argument_index" not in st.session_state:
+    st.session_state.selected_argument_index = 0
+
+
+# -----------------------------
+# SIMPLE TEMPORARY JUDGE
+# This is NOT real AI yet.
+# It gives a basic score based on simple writing signals.
+# Later, this can be replaced with OpenAI.
+# -----------------------------
+
+def score_text(text):
     """
-    This function sends the debate to OpenAI and asks it to judge the debate.
+    Beginner explanation:
+    This function gives a rough score to a debate response.
 
-    The AI is asked to return JSON so the app can display the result neatly.
+    It looks for:
+    - enough detail
+    - reasoning words like because/however/therefore
+    - examples or evidence words
+    - respectful tone
+
+    This is temporary until you connect the real AI judge.
     """
 
-    debate_text = "\n".join(
-        [f"{message['side']}: {message['text']}" for message in messages]
+    score = 50
+    lower = text.lower()
+
+    if len(text.split()) > 25:
+        score += 10
+
+    if any(word in lower for word in ["because", "therefore", "since", "so"]):
+        score += 10
+
+    if any(word in lower for word in ["example", "data", "study", "evidence", "research", "cost", "impact"]):
+        score += 10
+
+    if any(word in lower for word in ["however", "but", "although", "counterpoint"]):
+        score += 10
+
+    if any(word in lower for word in ["stupid", "idiot", "dumb", "moron"]):
+        score -= 20
+
+    return max(0, min(score, 100))
+
+
+def judge_battle(messages):
+    """
+    Beginner explanation:
+    This function compares your responses against the opponent's responses.
+
+    For now, it uses the simple scoring function above.
+    Later, this is the function you would replace with OpenAI.
+    """
+
+    user_scores = []
+    opponent_scores = []
+
+    for message in messages:
+        if message["side"] == "You":
+            user_scores.append(score_text(message["text"]))
+        else:
+            opponent_scores.append(score_text(message["text"]))
+
+    user_avg = round(sum(user_scores) / len(user_scores), 1) if user_scores else 0
+    opponent_avg = round(sum(opponent_scores) / len(opponent_scores), 1) if opponent_scores else 0
+
+    if user_avg > opponent_avg:
+        winner = "You"
+    elif opponent_avg > user_avg:
+        winner = "Opponent"
+    else:
+        winner = "Tie"
+
+    rationale = (
+        "This temporary judge scores based on clarity, detail, reasoning words, evidence signals, "
+        "direct counterpoints, and civility. It does not fact-check yet."
     )
 
-    prompt = f"""
-You are DebateRef, a neutral AI debate judge.
-
-Your job:
-1. Read the debate topic.
-2. Read both sides of the debate.
-3. Evaluate who argued better.
-4. Check factual claims when possible.
-5. Do not reward a side just because you personally agree with them.
-6. Reward better reasoning, evidence, direct responses, accuracy, clarity, consistency, and civility.
-
-Use these judging categories:
-{", ".join(JUDGING_CRITERIA)}
-
-Return ONLY valid JSON in this exact structure:
-
-{{
-  "winner": "Mike, Opponent, or Tie",
-  "summary": "Short explanation of why they won.",
-  "scores": [
-    {{
-      "category": "Evidence Quality",
-      "mike": 0,
-      "opponent": 0,
-      "reason": "Beginner-friendly explanation of the score."
-    }}
-  ],
-  "fact_checks": [
-    {{
-      "claim": "Specific claim being checked.",
-      "verdict": "True / Mostly true / Mixed / Mostly false / False / Not enough evidence",
-      "explanation": "Short explanation."
-    }}
-  ],
-  "improvement_notes": [
-    "One practical way a debater could improve."
-  ]
-}}
-
-Debate topic:
-{topic}
-
-Debate messages:
-{debate_text}
-"""
-
-    response = client.responses.create(
-        model="gpt-4.1-mini",
-        tools=[{"type": "web_search_preview"}],
-        input=prompt
-    )
-
-    # Convert the AI's text response into Python data.
-    return json.loads(response.output_text)
+    return {
+        "winner": winner,
+        "you_score": user_avg,
+        "opponent_score": opponent_avg,
+        "rationale": rationale,
+    }
 
 
 # -----------------------------
-# LAYOUT
+# APP LAYOUT
 # -----------------------------
 
-left_col, middle_col, right_col = st.columns([1, 2, 1.3])
+left, middle, right = st.columns([1, 1.6, 1.2])
 
 
 # -----------------------------
-# LEFT SIDE: DEBATE SETTINGS
+# LEFT: TOPICS
 # -----------------------------
 
-with left_col:
-    st.subheader("Debate Setup")
+with left:
+    st.subheader("1. Pick or Add Topic")
 
-    topic = st.text_area(
-        "Debate topic",
-        value="Should cities require solar panels on public buildings?",
-        height=100
+    topic_names = list(st.session_state.topics.keys())
+
+    selected_topic = st.selectbox(
+        "Choose an existing topic",
+        topic_names,
+        index=topic_names.index(st.session_state.active_topic)
     )
 
-    side = st.radio(
-        "Who is speaking?",
-        ["Mike", "Opponent"]
-    )
+    st.session_state.active_topic = selected_topic
 
-    new_message = st.text_area(
-        "New debate point",
-        placeholder="Type a debate point here...",
-        height=130
-    )
+    new_topic = st.text_input("Add a new topic")
 
-    if st.button("Add Point", use_container_width=True):
-        if new_message.strip():
-            st.session_state.messages.append(
-                {
-                    "side": side,
-                    "text": new_message.strip()
-                }
-            )
-
-            # Clear old result because the debate changed.
-            st.session_state.result = None
-
+    if st.button("Add Topic", use_container_width=True):
+        if new_topic.strip():
+            st.session_state.topics[new_topic.strip()] = []
+            st.session_state.active_topic = new_topic.strip()
             st.rerun()
         else:
-            st.warning("Type a message before adding it.")
-
-    if st.button("Clear Debate", use_container_width=True):
-        st.session_state.messages = []
-        st.session_state.result = None
-        st.rerun()
-
-
-# -----------------------------
-# MIDDLE: DEBATE CHAT
-# -----------------------------
-
-with middle_col:
-    st.subheader("Debate")
-
-    if not st.session_state.messages:
-        st.info("No debate points yet. Add one on the left.")
-    else:
-        for message in st.session_state.messages:
-            if message["side"] == "Mike":
-                st.chat_message("user").write(f"**Mike:** {message['text']}")
-            else:
-                st.chat_message("assistant").write(f"**Opponent:** {message['text']}")
+            st.warning("Type a topic first.")
 
     st.divider()
 
-    if st.button("✨ Judge Debate", type="primary", use_container_width=True):
-        if len(st.session_state.messages) < 2:
-            st.warning("Add at least two debate points before judging.")
+    st.subheader("2. Add Argument to Topic")
+
+    new_author = st.text_input("Argument author", value="New User")
+    new_argument = st.text_area("Argument", height=120)
+
+    if st.button("Add Argument", use_container_width=True):
+        if new_argument.strip():
+            st.session_state.topics[st.session_state.active_topic].append(
+                {
+                    "author": new_author.strip() or "Anonymous",
+                    "argument": new_argument.strip(),
+                }
+            )
+            st.rerun()
         else:
-            with st.spinner("AI is judging the debate and checking factual claims..."):
-                try:
-                    st.session_state.result = judge_debate(
-                        topic,
-                        st.session_state.messages
-                    )
-                    st.success("Debate judged.")
-                except Exception as error:
-                    st.error("Something went wrong while judging the debate.")
-                    st.write(error)
+            st.warning("Type an argument first.")
 
 
 # -----------------------------
-# RIGHT SIDE: AI VERDICT
+# MIDDLE: ARGUMENTS + START BATTLE
 # -----------------------------
 
-with right_col:
-    st.subheader("AI Verdict")
+with middle:
+    st.subheader(f"Arguments: {st.session_state.active_topic}")
 
-    result = st.session_state.result
+    arguments = st.session_state.topics[st.session_state.active_topic]
 
-    if result is None:
-        st.info("Click **Judge Debate** to see the AI verdict.")
+    if not arguments:
+        st.info("No arguments yet. Add one from the left.")
     else:
-        st.metric("Winner", result.get("winner", "Unknown"))
+        for i, item in enumerate(arguments):
+            with st.container(border=True):
+                st.write(f"**{item['author']} says:**")
+                st.write(item["argument"])
 
-        st.write(result.get("summary", "No summary provided."))
+                if st.button("Submit a Rebuttal", key=f"rebuttal_{i}", use_container_width=True):
+                    st.session_state.selected_argument_index = i
+                    st.session_state.show_rebuttal_box = True
+
+    if st.session_state.get("show_rebuttal_box", False) and arguments:
+        selected = arguments[st.session_state.selected_argument_index]
+
+        st.divider()
+        st.subheader("Start Battle")
+
+        st.write("You are rebutting:")
+        st.info(selected["argument"])
+
+        opening_rebuttal = st.text_area(
+            "Your rebuttal",
+            placeholder="Write your response to start the battle...",
+            height=150
+        )
+
+        if st.button("Start Battle", type="primary", use_container_width=True):
+            if opening_rebuttal.strip():
+                new_battle = {
+                    "id": len(st.session_state.battles) + 1,
+                    "topic": st.session_state.active_topic,
+                    "opponent": selected["author"],
+                    "original_argument": selected["argument"],
+                    "created": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                    "messages": [
+                        {
+                            "side": "Opponent",
+                            "text": selected["argument"],
+                        },
+                        {
+                            "side": "You",
+                            "text": opening_rebuttal.strip(),
+                        },
+                    ],
+                    "result": None,
+                }
+
+                st.session_state.battles.append(new_battle)
+                st.session_state.show_rebuttal_box = False
+                st.rerun()
+            else:
+                st.warning("Write your rebuttal first.")
+
+
+# -----------------------------
+# RIGHT: ACTIVE BATTLE
+# -----------------------------
+
+with right:
+    st.subheader("Battle Threads")
+
+    if not st.session_state.battles:
+        st.info("No battles yet. Submit a rebuttal to start one.")
+    else:
+        battle_options = [
+            f"Battle {battle['id']} — {battle['topic']} vs {battle['opponent']}"
+            for battle in st.session_state.battles
+        ]
+
+        selected_battle_label = st.selectbox("Choose battle", battle_options)
+        selected_index = battle_options.index(selected_battle_label)
+        battle = st.session_state.battles[selected_index]
+
+        st.write(f"**Topic:** {battle['topic']}")
+        st.caption(f"Started: {battle['created']}")
 
         st.divider()
 
-        st.subheader("Scores")
-
-        for score in result.get("scores", []):
-            st.write(f"**{score.get('category', 'Category')}**")
-
-            mike_score = score.get("mike", 0)
-            opponent_score = score.get("opponent", 0)
-
-            st.write(f"Mike: {mike_score}/100")
-            st.progress(mike_score / 100)
-
-            st.write(f"Opponent: {opponent_score}/100")
-            st.progress(opponent_score / 100)
-
-            st.caption(score.get("reason", ""))
+        for msg in battle["messages"]:
+            if msg["side"] == "You":
+                st.chat_message("user").write(f"**You:** {msg['text']}")
+            else:
+                st.chat_message("assistant").write(f"**Opponent:** {msg['text']}")
 
         st.divider()
 
-        st.subheader("Fact Checks")
+        next_side = st.radio(
+            "Add next response as:",
+            ["You", "Opponent"],
+            horizontal=True
+        )
 
-        fact_checks = result.get("fact_checks", [])
+        next_response = st.text_area(
+            "Next response",
+            placeholder="Continue the debate...",
+            height=100
+        )
 
-        if not fact_checks:
-            st.caption("No specific factual claims were checked.")
-        else:
-            for fact in fact_checks:
-                st.write(f"**Claim:** {fact.get('claim', '')}")
-                st.write(f"**Verdict:** {fact.get('verdict', '')}")
-                st.caption(fact.get("explanation", ""))
+        if st.button("Add Response", use_container_width=True):
+            if next_response.strip():
+                battle["messages"].append(
+                    {
+                        "side": next_side,
+                        "text": next_response.strip(),
+                    }
+                )
+                battle["result"] = None
+                st.rerun()
+            else:
+                st.warning("Type a response first.")
 
-        st.divider()
+        if st.button("Judge Round", type="primary", use_container_width=True):
+            battle["result"] = judge_battle(battle["messages"])
+            st.rerun()
 
-        st.subheader("Improvement Notes")
+        if battle["result"]:
+            st.divider()
+            st.subheader("Round Result")
 
-        for note in result.get("improvement_notes", []):
-            st.write(f"- {note}")
+            st.metric("Winner", battle["result"]["winner"])
+
+            st.write(f"**Your Score:** {battle['result']['you_score']}/100")
+            st.progress(battle["result"]["you_score"] / 100)
+
+            st.write(f"**Opponent Score:** {battle['result']['opponent_score']}/100")
+            st.progress(battle["result"]["opponent_score"] / 100)
+
+            st.caption(battle["result"]["rationale"])
